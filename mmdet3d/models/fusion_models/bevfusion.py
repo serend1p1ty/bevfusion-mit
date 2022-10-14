@@ -1,7 +1,9 @@
+import os
 from typing import Any, Dict
 
 import torch
 from mmcv.runner import auto_fp16, force_fp32
+from mmcv.parallel.scatter_gather import scatter_kwargs
 from torch import nn
 from torch.nn import functional as F
 
@@ -85,6 +87,19 @@ class BEVFusion(Base3DFusionModel):
         if "camera" in self.encoders:
             self.encoders["camera"]["backbone"].init_weights()
 
+    def to_multi_cuda_devices(self):
+        device1 = int(os.environ["DEVICE_ID1"])
+        device2 = int(os.environ["DEVICE_ID2"])
+        self.cuda(device2)
+        self.encoders["camera"]["backbone"].cuda(device1)
+        # self.encoders["camera"]["neck"].cuda(device_id + 1)
+        # self.encoders["camera"]["vtransform"].cuda(device_id + 1)
+        # self.encoders["lidar"].cuda(device_id + 1)
+        # self.fuser.cuda(device_id + 1)
+        # self.decoder.cuda(device_id + 1)
+        # self.heads.cuda(device_id + 1)
+        return self
+
     def extract_camera_features(
         self,
         x,
@@ -102,7 +117,12 @@ class BEVFusion(Base3DFusionModel):
         B, N, C, H, W = x.size()
         x = x.view(B * N, C, H, W)
 
+        if "MODEL_PARALLELISM" in os.environ:
+            x = x.cuda(int(os.environ["DEVICE_ID1"]))
         x = self.encoders["camera"]["backbone"](x)
+        if "MODEL_PARALLELISM" in os.environ:
+            for i, _ in enumerate(x):
+                x[i] = x[i].cuda(int(os.environ["DEVICE_ID2"]))
         x = self.encoders["camera"]["neck"](x)
 
         if not isinstance(x, torch.Tensor):
@@ -162,8 +182,17 @@ class BEVFusion(Base3DFusionModel):
 
         return feats, coords, sizes
 
+    def forward(self, *args, **kwargs):
+        if "MODEL_PARALLELISM" in os.environ:
+            device2 = int(os.environ['DEVICE_ID2'])
+            # unpack mmcv DataContainer
+            args, kwargs = scatter_kwargs(args, kwargs, [device2], dim=0)
+            return self._forward(*args[0], **kwargs[0])
+        else:
+            return self._forward(*args, **kwargs)
+
     @auto_fp16(apply_to=("img", "points"))
-    def forward(
+    def _forward(
         self,
         img,
         points,

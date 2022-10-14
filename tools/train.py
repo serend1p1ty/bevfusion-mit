@@ -31,7 +31,10 @@ def main():
     cfg = Config(recursive_eval(configs), filename=args.config)
 
     torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
-    torch.cuda.set_device(dist.local_rank())
+    if cfg.get("model_parallelism", False):
+        torch.cuda.set_device(dist.local_rank() * 2)
+    else:
+        torch.cuda.set_device(dist.local_rank())
 
     if args.run_dir is None:
         args.run_dir = auto_set_run_dir()

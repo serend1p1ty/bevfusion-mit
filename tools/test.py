@@ -3,6 +3,7 @@ import copy
 import os
 import warnings
 
+import cv2
 import mmcv
 import torch
 from torchpack.utils.config import configs
@@ -114,8 +115,9 @@ def main():
     args = parse_args()
     dist.init()
 
+    cv2.setNumThreads(1)
+
     torch.backends.cudnn.benchmark = True
-    torch.cuda.set_device(dist.local_rank())
 
     assert args.out or args.eval or args.format_only or args.show or args.show_dir, (
         "Please specify at least one operation (save/eval/format/show the "
@@ -132,6 +134,12 @@ def main():
     configs.load(args.config, recursive=True)
     cfg = Config(recursive_eval(configs), filename=args.config)
     print(cfg)
+
+    model_parallelism = cfg.get("model_parallelism", False)
+    if model_parallelism:
+        torch.cuda.set_device(dist.local_rank() * 2)
+    else:
+        torch.cuda.set_device(dist.local_rank())
 
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
@@ -195,11 +203,26 @@ def main():
         model = MMDataParallel(model, device_ids=[0])
         outputs = single_gpu_test(model, data_loader)
     else:
-        model = MMDistributedDataParallel(
-            model.cuda(),
-            device_ids=[torch.cuda.current_device()],
-            broadcast_buffers=False,
-        )
+        if model_parallelism:
+            if callable(getattr(model, "to_multi_cuda_devices", None)):
+                local_rank = dist.local_rank()
+                os.environ['DEVICE_ID1'] = str(local_rank * 2)
+                os.environ['DEVICE_ID2'] = str(local_rank * 2 + 1)
+                os.environ['MODEL_PARALLELISM'] = "on"
+                model = MMDistributedDataParallel(
+                    model.to_multi_cuda_devices(),
+                    broadcast_buffers=False,
+                )
+                # required by mmcv.runner.TextLoggerHook
+                model.output_device = local_rank * 2 + 1
+            else:
+                raise Exception("This model does not support model parallelism.")
+        else:
+            model = MMDistributedDataParallel(
+                model.cuda(),
+                device_ids=[torch.cuda.current_device()],
+                broadcast_buffers=False,
+            )
         outputs = multi_gpu_test(model, data_loader, args.tmpdir, args.gpu_collect)
 
     rank, _ = get_dist_info()
