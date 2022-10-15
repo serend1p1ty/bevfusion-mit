@@ -90,8 +90,8 @@ class BEVFusion(Base3DFusionModel):
     def to_multi_cuda_devices(self):
         device1 = int(os.environ["DEVICE_ID1"])
         device2 = int(os.environ["DEVICE_ID2"])
-        self.cuda(device2)
-        self.encoders["camera"]["backbone"].cuda(device1)
+        self.cuda(device1)
+        self.encoders["camera"]["backbone"].cuda(device2)
         # self.encoders["camera"]["neck"].cuda(device_id + 1)
         # self.encoders["camera"]["vtransform"].cuda(device_id + 1)
         # self.encoders["lidar"].cuda(device_id + 1)
@@ -118,11 +118,11 @@ class BEVFusion(Base3DFusionModel):
         x = x.view(B * N, C, H, W)
 
         if "MODEL_PARALLELISM" in os.environ:
-            x = x.cuda(int(os.environ["DEVICE_ID1"]))
+            x = x.cuda(int(os.environ["DEVICE_ID2"]))
         x = self.encoders["camera"]["backbone"](x)
         if "MODEL_PARALLELISM" in os.environ:
             for i, _ in enumerate(x):
-                x[i] = x[i].cuda(int(os.environ["DEVICE_ID2"]))
+                x[i] = x[i].cuda(int(os.environ["DEVICE_ID1"]))
         x = self.encoders["camera"]["neck"](x)
 
         if not isinstance(x, torch.Tensor):
@@ -184,9 +184,9 @@ class BEVFusion(Base3DFusionModel):
 
     def forward(self, *args, **kwargs):
         if "MODEL_PARALLELISM" in os.environ:
-            device2 = int(os.environ['DEVICE_ID2'])
+            device1 = int(os.environ['DEVICE_ID1'])
             # unpack mmcv DataContainer
-            args, kwargs = scatter_kwargs(args, kwargs, [device2], dim=0)
+            args, kwargs = scatter_kwargs(args, kwargs, [device1], dim=0)
             return self._forward(*args[0], **kwargs[0])
         else:
             return self._forward(*args, **kwargs)
