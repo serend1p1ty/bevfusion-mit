@@ -92,8 +92,8 @@ class BEVFusion(Base3DFusionModel):
         device2 = int(os.environ["DEVICE_ID2"])
         self.cuda(device1)
         self.encoders["camera"]["backbone"].cuda(device2)
-        # self.encoders["camera"]["neck"].cuda(device_id + 1)
-        # self.encoders["camera"]["vtransform"].cuda(device_id + 1)
+        self.encoders["camera"]["neck"].cuda(device2)
+        self.encoders["camera"]["vtransform"].cuda(device2)
         # self.encoders["lidar"].cuda(device_id + 1)
         # self.fuser.cuda(device_id + 1)
         # self.decoder.cuda(device_id + 1)
@@ -117,12 +117,7 @@ class BEVFusion(Base3DFusionModel):
         B, N, C, H, W = x.size()
         x = x.view(B * N, C, H, W)
 
-        if "MODEL_PARALLELISM" in os.environ:
-            x = x.cuda(int(os.environ["DEVICE_ID2"]))
         x = self.encoders["camera"]["backbone"](x)
-        if "MODEL_PARALLELISM" in os.environ:
-            for i, _ in enumerate(x):
-                x[i] = x[i].cuda(int(os.environ["DEVICE_ID1"]))
         x = self.encoders["camera"]["neck"](x)
 
         if not isinstance(x, torch.Tensor):
@@ -184,9 +179,9 @@ class BEVFusion(Base3DFusionModel):
 
     def forward(self, *args, **kwargs):
         if "MODEL_PARALLELISM" in os.environ:
-            device1 = int(os.environ['DEVICE_ID1'])
+            device2 = int(os.environ['DEVICE_ID2'])
             # unpack mmcv DataContainer
-            args, kwargs = scatter_kwargs(args, kwargs, [device1], dim=0)
+            args, kwargs = scatter_kwargs(args, kwargs, [device2], dim=0)
             return self._forward(*args[0], **kwargs[0])
         else:
             return self._forward(*args, **kwargs)
@@ -269,7 +264,12 @@ class BEVFusion(Base3DFusionModel):
                     lidar_aug_matrix,
                     metas,
                 )
+                if "MODEL_PARALLELISM" in os.environ:
+                    feature = feature.cuda(int(os.environ["DEVICE_ID1"]))
             elif sensor == "lidar":
+                if "MODEL_PARALLELISM" in os.environ:
+                    for i, _ in enumerate(points):
+                        points[i] = points[i].cuda(int(os.environ["DEVICE_ID1"]))
                 feature = self.extract_lidar_features(points)
             else:
                 raise ValueError(f"unsupported sensor: {sensor}")
@@ -295,6 +295,9 @@ class BEVFusion(Base3DFusionModel):
             for type, head in self.heads.items():
                 if type == "object":
                     pred_dict = head(x, metas)
+                    if "MODEL_PARALLELISM" in os.environ:
+                        for i, _ in enumerate(gt_labels_3d):
+                            gt_labels_3d[i] = gt_labels_3d[i].cuda(int(os.environ["DEVICE_ID1"]))
                     losses = head.loss(gt_bboxes_3d, gt_labels_3d, pred_dict)
                 elif type == "map":
                     losses = head(x, gt_masks_bev)

@@ -23,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("config", metavar="FILE", help="config file")
     parser.add_argument("--run-dir", metavar="DIR", help="run directory")
+    parser.add_argument("--load-fusion-ckpt", action="store_true")
     args, opts = parser.parse_known_args()
 
     configs.load(args.config, recursive=True)
@@ -70,6 +71,10 @@ def main():
 
     model = build_model(cfg.model)
     model.init_weights()
+    if args.load_fusion_ckpt:
+        lidar_only_ckpt = torch.load("pretrained/lidar-only-det.pth", map_location="cpu")["state_dict"]
+        print("##### Load LiDAR-only detection checkpoint #####")
+        print(model.load_state_dict(lidar_only_ckpt, strict=False))
     if cfg.get("sync_bn", None):
         if not isinstance(cfg["sync_bn"], dict):
             cfg["sync_bn"] = dict(exclude=[])
