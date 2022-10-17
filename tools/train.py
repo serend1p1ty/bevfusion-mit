@@ -70,7 +70,7 @@ def main():
     datasets = [build_dataset(cfg.data.train)]
 
     model = build_model(cfg.model)
-    model.init_weights()
+    # model.init_weights()
     if args.load_fusion_ckpt:
         lidar_only_ckpt = torch.load("pretrained/lidar-only-det.pth", map_location="cpu")["state_dict"]
         print("##### Load LiDAR-only detection checkpoint #####")

@@ -85,7 +85,12 @@ class BEVFusion(Base3DFusionModel):
 
     def init_weights(self) -> None:
         if "camera" in self.encoders:
-            self.encoders["camera"]["backbone"].init_weights()
+            path = "pretrained/swint-nuimages-pretrained.pth"
+            print(f"Load weights from {path}")
+            ckpt = torch.load(path, map_location="cpu")["state_dict"]
+            ckpt = {"encoders.camera.backbone." + k: v for k, v in ckpt.items()}
+            print(self.load_state_dict(ckpt, strict=False))
+            # self.encoders["camera"]["backbone"].init_weights()
 
     def to_multi_cuda_devices(self):
         device1 = int(os.environ["DEVICE_ID1"])
@@ -250,7 +255,15 @@ class BEVFusion(Base3DFusionModel):
         for sensor in (
             self.encoders if self.training else list(self.encoders.keys())[::-1]
         ):
+            device1 = int(os.environ["DEVICE_ID1"])
+            device2 = int(os.environ["DEVICE_ID2"])
             if sensor == "camera":
+                if "MODEL_PARALLELISM" in os.environ:
+                    # LiDAR is before camera when testing, so points is
+                    # already in device1. We need to move it to device2.
+                    for i, _ in enumerate(points):
+                        if points[i].device != torch.device(device2):
+                            points[i] = points[i].cuda(device2)
                 feature = self.extract_camera_features(
                     img,
                     points,
@@ -265,11 +278,11 @@ class BEVFusion(Base3DFusionModel):
                     metas,
                 )
                 if "MODEL_PARALLELISM" in os.environ:
-                    feature = feature.cuda(int(os.environ["DEVICE_ID1"]))
+                    feature = feature.cuda(device1)
             elif sensor == "lidar":
                 if "MODEL_PARALLELISM" in os.environ:
                     for i, _ in enumerate(points):
-                        points[i] = points[i].cuda(int(os.environ["DEVICE_ID1"]))
+                        points[i] = points[i].cuda(device1)
                 feature = self.extract_lidar_features(points)
             else:
                 raise ValueError(f"unsupported sensor: {sensor}")
